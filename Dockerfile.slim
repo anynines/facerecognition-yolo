@@ -1,0 +1,30 @@
+FROM python:3-slim
+
+LABEL maintainer="admin@anynines.com"
+LABEL description="Facerecognition using (Darknet) Yolo Weights."
+
+RUN mkdir /workdir
+WORKDIR /workdir
+
+ENV TZ=Europe/Berlin
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN apt-get update && apt-get -y install --no-install-recommends \
+  autoconf automake build-essential cmake \
+  python3 python3-numpy python3-opencv python3-pip python3-setuptools python3-venv \
+  libopencv-dev libtool opencv-data
+
+COPY yolo_opencv.py /workdir/yolo_opencv.py
+COPY yolov3.cfg /workdir/yolov3.cfg
+COPY yolov3.txt  /workdir/yolov3.txt 
+COPY yolov3.weights /workdir/yolov3.weights
+COPY dog.jpg /tmp/original-image.jpg
+
+# see: https://docs.aws.amazon.com/lambda/latest/dg/python-image.html
+RUN python3 -m venv /workdir/venv
+RUN /workdir/venv/bin/pip install awslambdaric opencv-python
+
+# Recommended CMD
+# cd object-detection-opencv && python3 yolo_opencv.py --image /tmp/original-image.jpg --config yolov3.cfg --weights ../yolov3.weights --classes yolov3.txt 
+
+CMD ["/bin/bash"]

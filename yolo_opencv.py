@@ -22,26 +22,17 @@ args = ap.parse_args()
 
 
 def get_output_layers(net):
-    
     layer_names = net.getLayerNames()
-    
-    output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
-
+    output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers()]
     return output_layers
 
-
 def draw_prediction(img, class_id, confidence, x, y, x_plus_w, y_plus_h):
-
     label = str(classes[class_id])
-
     color = COLORS[class_id]
-
     cv2.rectangle(img, (x,y), (x_plus_w,y_plus_h), color, 2)
-
     cv2.putText(img, label, (x-10,y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
 def draw_blur(img, class_id, confidence, x, y, x_plus_w, y_plus_h):
-
     label = str(classes[class_id])
 
     color = COLORS[class_id]
@@ -101,11 +92,9 @@ for out in outs:
             confidences.append(float(confidence))
             boxes.append([x, y, w, h])
 
-
 indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
 
 for i in indices:
-    i = i[0]
     box = boxes[i]
     x = box[0]
     y = box[1]
