@@ -1,30 +1,39 @@
-FROM python:3-slim
+FROM python:3.11-slim AS build-env
 
 LABEL maintainer="admin@anynines.com"
 LABEL description="Facerecognition using (Darknet) Yolo Weights."
 
-RUN mkdir /workdir
-WORKDIR /workdir
+ENV TZ=Europe/Berlin
+RUN /bin/ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN apt-get update && apt-get upgrade -y && apt-get -y install --no-install-recommends \
+ autoconf automake build-essential cmake libopencv-dev libtool opencv-data
+
+# see: https://docs.aws.amazon.com/lambda/latest/dg/python-image.html
+RUN pip install --upgrade pip
+RUN pip install awslambdaric
+RUN pip install opencv-python-headless
+RUN mkdir /tmp/object_recognition
+
+FROM gcr.io/distroless/python3-debian12:nonroot
 
 ENV TZ=Europe/Berlin
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-RUN apt-get update && apt-get -y install --no-install-recommends \
-  autoconf automake build-essential cmake \
-  python3 python3-numpy python3-opencv python3-pip python3-setuptools python3-venv \
-  libopencv-dev libtool opencv-data
+WORKDIR /workdir
+
+COPY --from=build-env /etc/timezone /etc/timezone
+COPY --from=build-env /etc/localtime /etc/localtime
+COPY --from=build-env /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=build-env /tmp/object_recognition /tmp/object_recognition
 
 COPY yolo_opencv.py /workdir/yolo_opencv.py
 COPY yolov3.cfg /workdir/yolov3.cfg
-COPY yolov3.txt  /workdir/yolov3.txt 
+COPY yolov3.txt /workdir/yolov3.txt
 COPY yolov3.weights /workdir/yolov3.weights
-COPY dog.jpg /tmp/original-image.jpg
 
-# see: https://docs.aws.amazon.com/lambda/latest/dg/python-image.html
-RUN python3 -m venv /workdir/venv
-RUN /workdir/venv/bin/pip install awslambdaric opencv-python
+ENV PYTHONPATH=/usr/local/lib/python3.11/site-packages
 
-# Recommended CMD
-# cd object-detection-opencv && python3 yolo_opencv.py --image /tmp/original-image.jpg --config yolov3.cfg --weights ../yolov3.weights --classes yolov3.txt 
-
-CMD ["/bin/bash"]
+# see https://docs.docker.com/reference/dockerfile/#understand-how-cmd-and-entrypoint-interact
+ENTRYPOINT ["python", "/workdir/yolo_opencv.py", "--config", "/workdir/yolov3.cfg", "--weights", \
+ "/workdir/yolov3.weights", "--classes", "/workdir/yolov3.txt", "--image"]
+CMD ["/tmp/original-image.jpg"]
