@@ -103,4 +103,3 @@ for i in indices:
     draw_blur(image, class_ids[i], confidences[i], round(x), round(y), round(x+w), round(y+h))
    
 cv2.imwrite("/tmp/object_recognition/filtered-image.jpg", image)
-cv2.destroyAllWindows()

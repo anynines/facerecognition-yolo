@@ -1,33 +1,39 @@
-FROM python:3.9-alpine
+FROM python:3.12-alpine3.20 AS build-env
+# We're using python:3.12-alpine3.20 so that we can use Alpine's "py3-opencv" binary package (below)
+# see: https://pkgs.alpinelinux.org/contents?name=py3-opencv&repo=community&branch=v3.20&arch=x86_64
 
 LABEL maintainer="admin@anynines.com"
 LABEL description="Facerecognition using (Darknet) Yolo Weights."
 
-RUN mkdir /workdir
+RUN apk add --no-cache --update --repository=https://dl-cdn.alpinelinux.org/alpine/v3.16/main/ libexecinfo-dev
+RUN apk add --no-cache --update autoconf automake build-base cmake libcurl libtool make
+
+# see: https://docs.aws.amazon.com/lambda/latest/dg/python-image.html
+RUN pip install --upgrade pip
+RUN pip install --verbose --no-cache-dir awslambdaric
+RUN mkdir /tmp/object_recognition
+
+FROM python:3.12-alpine3.20
+
+RUN apk add --no-cache --update py3-opencv
+
+COPY --from=build-env /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=build-env /tmp/object_recognition /tmp/object_recognition
+
+COPY yolo_opencv.py /workdir/yolo_opencv.py
+COPY yolov3.cfg /workdir/yolov3.cfg
+COPY yolov3.txt /workdir/yolov3.txt
+COPY yolov3.weights /workdir/yolov3.weights
+
 WORKDIR /workdir
 
 ENV TZ=Europe/Berlin
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-COPY yolo_opencv.py /workdir/yolo_opencv.py
-COPY yolov3.cfg /workdir/yolov3.cfg
-COPY yolov3.txt  /workdir/yolov3.txt 
-COPY yolov3.weights /workdir/yolov3.weights
-COPY dog.jpg /tmp/original-image.jpg
+ENV PYTHONPATH=/usr/lib/python3.12/site-packages
 
-# see: https://github.com/aws/aws-lambda-python-runtime-interface-client/issues/144
-RUN echo https://dl-cdn.alpinelinux.org/alpine/v3.19/main >> /etc/apk/repositories
-RUN echo https://dl-cdn.alpinelinux.org/alpine/v3.19/community >> /etc/apk/repositories
+# see https://docs.docker.com/reference/dockerfile/#understand-how-cmd-and-entrypoint-interact
+ENTRYPOINT ["/usr/local/bin/python", "/workdir/yolo_opencv.py", "--config", "/workdir/yolov3.cfg", \
+ "--weights","/workdir/yolov3.weights", "--classes", "/workdir/yolov3.txt", "--image"]
+CMD ["/tmp/original-image.jpg"]
 
-RUN apk add --no-cache --update autoconf=2.71-r2 automake build-base cmake libcurl libtool linux-headers make py3-numpy-pyc py3-opencv-pyc
-RUN apk add --no-cache --update --repository=https://dl-cdn.alpinelinux.org/alpine/v3.16/main/ libexecinfo-dev
-
-# see: https://docs.aws.amazon.com/lambda/latest/dg/python-image.html
-# RUN python3 -m venv /workdir/venv
-# RUN /workdir/venv/bin/pip install awslambdaric opencv-python
-RUN pip3 install --verbose --no-cache-dir awslambdaric opencv-python
-
-# Recommended CMD
-# cd object-detection-opencv && python3 yolo_opencv.py --image /tmp/original-image.jpg --config yolov3.cfg --weights ../yolov3.weights --classes yolov3.txt 
-
-CMD ["/bin/sh"]
