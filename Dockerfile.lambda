@@ -1,0 +1,42 @@
+ARG FUNCTION_DIR="/function"
+
+FROM python:3.11-slim AS build-env
+
+ARG FUNCTION_DIR
+RUN mkdir -p ${FUNCTION_DIR}
+
+LABEL maintainer="admin@anynines.com"
+LABEL description="Facerecognition using (Darknet) Yolo Weights."
+
+ENV TZ=Europe/Berlin
+RUN /bin/ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+RUN apt-get update && apt-get upgrade -y && apt-get -y install --no-install-recommends \
+ autoconf automake build-essential cmake libopencv-dev libtool opencv-data
+
+# see: https://docs.aws.amazon.com/lambda/latest/dg/python-image.html
+RUN pip install --upgrade pip
+RUN pip install --target ${FUNCTION_DIR} awslambdaric
+RUN pip install --target ${FUNCTION_DIR} boto3
+RUN pip install --target ${FUNCTION_DIR} opencv-python-headless
+RUN mkdir /tmp/object_recognition
+
+FROM gcr.io/distroless/python3-debian12:nonroot
+
+ARG FUNCTION_DIR
+WORKDIR ${FUNCTION_DIR}
+
+COPY --from=build-env ${FUNCTION_DIR} ${FUNCTION_DIR}
+COPY --from=build-env /etc/timezone /etc/timezone
+COPY --from=build-env /etc/localtime /etc/localtime
+COPY --from=build-env /tmp/object_recognition /tmp/object_recognition
+
+COPY yolo_opencv.py ${FUNCTION_DIR}/lambda_function.py
+COPY yolov3.cfg ${FUNCTION_DIR}/yolov3.cfg
+COPY yolov3.txt ${FUNCTION_DIR}/yolov3.txt
+COPY yolov3.weights ${FUNCTION_DIR}/yolov3.weights
+
+ENV TZ=Europe/Berlin
+
+ENTRYPOINT [ "python", "-m", "awslambdaric" ]
+CMD [ "lambda_function.lambda_handler" ]
