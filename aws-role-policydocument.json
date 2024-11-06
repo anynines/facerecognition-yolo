@@ -1,0 +1,10 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
+      "Resource": ["arn:aws:ecr:eu-central-1:976682474571:repository/facerecognition-yolo"]
+    }
+  ]
+}
