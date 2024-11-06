@@ -87,20 +87,23 @@ def lambda_handler(event, context):
 
     # event['image'] = event.get('image', "/tmp/original-image.jpg")
     # event['filtered_image'] = event.get('filtered_image', "/tmp/filtered-image.jpg")
-    event['config'] = "/function/yolov3.cfg"
-    event['weights'] = "/function/yolov3.weights"
-    event['classes'] = "/function/yolov3.txt"
+    event['config'] = "/var/task/yolov3.cfg"
+    event['weights'] = "/var/task/yolov3.weights"
+    event['classes'] = "/var/task/yolov3.txt"
 
     LOCAL_FILE_ORIGINAL_IMAGE = "/tmp/original-image.jpg"
     LOCAL_FILE_FILTERED_IMAGE = "/tmp/filtered-image.jpg"
 
-    if 'image' not in event OR 'filtered_image' not in event:
+    if 'image' not in event or 'filtered_image' not in event:
         return {
             "statusCode": 500,
             "body": json.dumps({
                 "message": "Input parameters 'image' or 'filtered_image' missing. Exiting.",
             }),
         }
+
+    logger.info('Anonymizing image: ' + event['image'])
+    logger.info('Anonymized image will be stored in: ' + event['filtered_image'])
 
     parsed_image_url = urlparse(event['image'])
     if parsed_image_url.scheme != 's3':
@@ -123,15 +126,15 @@ def lambda_handler(event, context):
 
     s3_image = S3Url(event['image'])
     s3_filtered_image = S3Url(event['filtered_image'])
-    s3 = boto3.resource('s3')
-    # AWS_REGION = os.environ.get('AWS_REGION')
 
+    s3 = boto3.resource('s3')
     try:
         s3.Bucket(s3_image.bucket).download_file(s3_image.key, LOCAL_FILE_ORIGINAL_IMAGE)
+        logger.info('Sucessfully downloaded image: ' + event['image'])
     except botocore.exceptions.ClientError as e:
         message = "The object could not be downloaded: " + event['image'],
         if e.response['Error']['Code'] == "404":
-            "message": "The object does not exist: " + event['image'],
+            message = "The object does not exist: " + event['image']
 
         return {
             "statusCode": e.response['Error']['Code'],
@@ -140,6 +143,7 @@ def lambda_handler(event, context):
             }),
         }
 
+    logger.debug('Using OpenCV on image: ' + event['image'])
     image = cv2.imread(LOCAL_FILE_ORIGINAL_IMAGE)
 
     Width = image.shape[1]
@@ -194,9 +198,11 @@ def lambda_handler(event, context):
         draw_blur(image, classes, class_ids[i], COLORS, confidences[i], round(x), round(y), round(x+w), round(y+h))
     
     cv2.imwrite(LOCAL_FILE_FILTERED_IMAGE, image)
+    s3 = boto3.client('s3')
     try:
         response = s3.upload_file(LOCAL_FILE_FILTERED_IMAGE, s3_filtered_image.bucket, s3_filtered_image.key)
-    except ClientError as e:
+        logger.info('Sucessfully uploaded image to: ' + event['filtered_image'])
+    except botocore.exceptions.ClientError as e:
         logging.error(e)
         return {
             "statusCode": e.response['Error']['Code'],
