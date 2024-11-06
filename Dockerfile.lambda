@@ -1,4 +1,4 @@
-ARG FUNCTION_DIR="/function"
+ARG FUNCTION_DIR="/var/task"
 
 FROM python:3.11-slim AS build-env
 
@@ -31,12 +31,12 @@ COPY --from=build-env /etc/timezone /etc/timezone
 COPY --from=build-env /etc/localtime /etc/localtime
 COPY --from=build-env /tmp/object_recognition /tmp/object_recognition
 
-COPY yolo_opencv.py ${FUNCTION_DIR}/lambda_function.py
+COPY lambda_function.py ${FUNCTION_DIR}/lambda_function.py
 COPY yolov3.cfg ${FUNCTION_DIR}/yolov3.cfg
 COPY yolov3.txt ${FUNCTION_DIR}/yolov3.txt
 COPY yolov3.weights ${FUNCTION_DIR}/yolov3.weights
 
 ENV TZ=Europe/Berlin
 
-ENTRYPOINT [ "python", "-m", "awslambdaric" ]
+ENTRYPOINT [ "/usr/bin/python", "-m", "awslambdaric" ]
 CMD [ "lambda_function.lambda_handler" ]
