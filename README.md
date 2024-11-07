@@ -1,62 +1,152 @@
 # Facerecognition YOLO
 
-Simple object recognition worker configured to perform face blur on jpg images fed via a RabbitMQ
-message queue.
+This repository hosts the Python application Facerecognition YOLO based on the
+[YOLO Real-Time Object Detection](https://pjreddie.com/darknet/yolo/) project. This application is
+packaged into a Docker container and executed on demand at
+[AWS Lambda](https://aws.amazon.com/lambda/). On this page we document how to build the Docker image
+and configure the AWS Lambda function which will execute the image.
 
-The code is part of the final exam of the free
-[anynines Kubernetes Tutorial](https://learn.kubernetes.anynines.com/). Therefore, the code is not
-meant to be production grade and contains refactoring TODOs that learners may engage with.
+- [Build The Docker image](#build-the-docker-image)
+- [Create The AWS Lambda Function](#create-the-aws-lambda-function)
+- [Links](#links)
 
-## The Worker
+## Build The Docker image
 
-The worker performs the following steps
+The Docker image uses the
+[multi-stage approach](https://docs.docker.com/build/building/multi-stage/) in order to reduce the
+size of the image and improve execution times. It uses
+[official Python image](https://hub.docker.com/_/python/) as its base image and a
+[distroless](https://github.com/GoogleContainerTools/distroless) Python image as its base for the
+final stage of the image. The main logic of the app can be found in
+[lambda_function.py](./lambda_function.py) (which was copied and re-factored from
+[yolo_opencv.py](./yolo_opencv.py)).
 
-- Connect to RabbitMQ
-- Retrieve a job (message)
-- Retrieve the image
-- Start image processing
-- Upload the image
-- Acknowledge the message (and thus remove it from the queue)
+```shell
+docker build -t facerecognition-yolo:lambda -f ./Dockerfile.lambda --provenance=false .
+```
 
-Read the source code for further information.
+**NOTE: the parameter `provenance=false` was added because Lambda does not support multi-platform
+images, see
+[this GitHub comment](https://github.com/docker/buildx/issues/1509#issuecomment-1378538197) for more
+information.**
 
-## Building the Image
+Tag and push the image to an ECR registry (Lambda only support ECR, not the Docker Hub or any other
+registry), execute:
 
-Example:
+```shell
+docker tag facerecognition-yolo:lambda 976682474571.dkr.ecr.eu-central-1.amazonaws.com/facerecognition-yolo:lambda
+docker push 976682474571.dkr.ecr.eu-central-1.amazonaws.com/facerecognition-yolo:lambda
+```
 
-    docker build -t facerecognition-yolo:dev .
+**NOTE: You may have to authenticate against the ECR repository before you can `pull` or `push`
+images:**
 
-## Publishing the Image
+```shell
+aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin 976682474571.dkr.ecr.eu-central-1.amazonaws.com
+```
 
-Example:
+### Testing The Docker Image
 
-    docker tag facerecognition-yolo:dev fischerjulian/facerecognition-yolo:dev
-    docker push fischerjulian/facerecognition-yolo:dev
+See
+[Test an image without adding RIE to the image](https://github.com/aws/aws-lambda-runtime-interface-emulator#test-an-image-without-adding-rie-to-the-image)
+to learn how to debug or test the Docker image. In brief:
 
-As a oneliner:
+#### Install the AWS Lambda Runtime Interface Emulator
 
-    docker build -t facerecognition-yolo:dev . && docker tag facerecognition-yolo:dev fischerjulian/facerecognition-yolo:dev && docker push fischerjulian/facerecognition-yolo:dev
+The following assumes an `arm64` based processor in your local system, i.e. MacBook M+ series:
 
-## Running the Image
+```shell
+mkdir -p ~/.aws-lambda-rie && curl -Lo ~/.aws-lambda-rie/aws-lambda-rie https://github.com/aws/aws-lambda-runtime-interface-emulator/releases/latest/download/aws-lambda-rie-arm64 && chmod +x ~/.aws-lambda-rie/aws-lambda-rie
+```
 
-Example:
+#### Run A Test Docker Container
 
-    docker run --rm -it --name facerecognition-yolo facerecognition-yolo bash
+The following Docker container runs the RIE (see above) and uses a directory `tmp` as a volume so
+that you can test with local files (NOTE: you'll have to update the code in
+[lambda_function.py](./lambda_function.py) if you want to use non-S3 sources for the test image
+files):
 
-### Running the Face Recognition
+```shell
+docker run --rm --name facerecognition-yolo -d -v `pwd`/tmp:/tmp -v ~/.aws-lambda-rie:/aws-lambda -p 9000:8080 --entrypoint /aws-lambda/aws-lambda-rie facerecognition-yolo:lambda /usr/local/bin/python -m awslambdaric lambda_function.lambda_handler
+```
 
-Inside the container run:
+**NOTE: If you want to use S3 buckets (see below), you'll have to add the environment variables
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (or similar) to the command above. See
+[here](https://docs.aws.amazon.com/lambda/latest/dg/configuration-envvars.html) for more
+information.**
 
-    cd python3 yolo_opencv.py --image /tmp/object_recognition/original-image.jpg --config yolov3.cfg --weights yolov3.weights --classes yolov3.txt
+```shell
+docker run ... --env AWS_ACCESS_KEY_ID=<value> --env AWS_SECRET_ACCESS_KEY=<value> ...
+```
 
-This will produce output file: `/tmp/object_recognition/filtered-image.jpg`
+#### Create S3 Buckets
 
-## Downloading the YOLO Weights Definition
+Create two S3 buckets (if you don't have any) to store source and resulting images:
 
-    wget https://pjreddie.com/media/files/yolov3.weights
+```shell
+aws s3 mb s3://a9s-aspekteins-input
+aws s3 mb s3://a9s-aspekteins-output
+```
 
-## Links and Further Reading
+Copy the source images to `s3://a9s-aspekteins-input` and use a URI to a blob as the `image`
+parameter (see below).
 
-1. https://pjreddie.com/darknet/yolo/
-2. https://github.com/loretoparisi/docker/tree/master/darknet
-3. https://www.arunponnusamy.com/yolo-object-detection-opencv-python.html
+#### Call the Lambda Function In The Test Docker Container
+
+Use `cURL` to execute the Lambda function in your Test Docker container:
+
+```shell
+curl "http://localhost:9000/2015-03-31/functions/function/invocations" -d '{}'; echo # this should produce an error
+```
+
+```shell
+curl "http://localhost:9000/2015-03-31/functions/function/invocations" -d '{"image": "s3://a9s-aspekteins-input/image.jpg", "filtered_image": "s3://a9s-aspekteins-output/image.jpg"}'; echo # if the Lambda function has access to both S3 buckets and the source image exists then the result should be stored in `s3://a9s-aspekteins-output/image.jpg`
+```
+
+## Create The AWS Lambda Function
+
+First, we need a Role (and assoicated policies) that the AWS Lambda function can assume to obtain
+acces both to ECR and the S3 buckets. First, create the policy that allows Lambda access to an ECR
+repository where the Docker image is stored (you may want to update the `Resource` target in the
+policy):
+
+### IAM Policy And Role
+
+```shell
+aws iam create-policy --policy-name aspekteins-allow-access-ecr --policy-document file://aws-role-policydocument.json
+```
+
+and now create the role
+
+```shell
+export ROLE_NAME=aspekteins-lambda-facerecognition-yolo
+aws iam create-role --role-name $ROLE_NAME --assume-role-policy-document file://aws-role.json
+aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::976682474571:policy/aspekteins-allow-access-ecr
+aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
+aws iam attach-role-policy --role-name $ROLE_NAME --policy-arn arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+```
+
+### S3 Buckets
+
+Two S3 buckets are required (technically, one bucket with unique prefixes for source and resulting
+image would be enough). Create these two buckets:
+
+```shell
+aws s3 mb s3://a9s-aspekteins-input
+aws s3 mb s3://a9s-aspekteins-output
+```
+
+### Create The Lambda Function
+
+```shell
+export ACCOUNT_ID=$(aws sts get-caller-identity | jq -r ".Account")
+aws lambda create-function --region eu-central-1 --function-name aspekteins-lambda-facerecognition-yolo --timeout 60 --role arn:aws:iam::${ACCOUNT_ID}:role/$ROLE_NAME --package-type Image --code ImageUri=976682474571.dkr.ecr.eu-central-1.amazonaws.com/facerecognition-yolo:lambda --memory-size 4096 --description "This Lambda function runs the YOLO Object Detection logic."
+```
+
+## Links
+
+- [Dockerfile reference](https://docs.docker.com/reference/dockerfile/)
+- [AWS Lambda: Building Lambda functions with Python](https://docs.aws.amazon.com/lambda/latest/dg/lambda-python.html)
+- [AWS: Amazon S3 examples using SDK for Python (Boto3)](https://docs.aws.amazon.com/code-library/latest/ug/python_3_s3_code_examples.html)
+- [Creating an up-to-date Distroless Python Image](https://alexos.dev/2022/07/08/creating-an-up-to-date-distroless-python-image/)
+- [AWS Lambda function for OpenCV](https://github.com/iandow/opencv_aws_lambda)
